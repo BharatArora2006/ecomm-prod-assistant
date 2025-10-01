@@ -1,0 +1,165 @@
+import os
+import sys
+import json
+from dotenv import load_dotenv
+from utils.config_loader import load_config
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+# from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
+from logger import GLOBAL_LOGGER as log
+from exception.custom_exception import ProductAssistantException
+import asyncio
+
+
+class ApiKeyManager:
+    """
+    Manages API keys, loading them from environment variables or a JSON string.
+    """
+    def __init__(self):
+        self.api_keys = {}
+
+        raw = os.getenv("API_KEYS")
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    self.api_keys = parsed
+                    log.info("Loaded API_KEYS JSON")
+            except Exception as e:
+                log.warning("Failed to parse API_KEYS JSON", error=str(e))
+
+        # Decide required keys dynamically
+        required = ["GOOGLE_API_KEY"]
+        provider = os.getenv("LLM_PROVIDER", "google").lower()
+        if provider == "openai":
+            required.append("OPENAI_API_KEY")
+        elif provider == "groq":
+            required.append("GROQ_API_KEY")
+        elif provider == "google":
+            # GOOGLE_API_KEY is already in required, but ensure consistency
+            if "GOOGLE_API_KEY" not in required:
+                 required.append("GOOGLE_API_KEY")
+
+
+        # Load from env if not in API_KEYS JSON
+        for key in required:
+            if not self.api_keys.get(key):
+                val = os.getenv(key)
+                if val:
+                    self.api_keys[key] = val
+                    log.info(f"Loaded {key} from env")
+
+        # Final check
+        missing = [k for k in required if not self.api_keys.get(k)]
+        if missing:
+            raise ProductAssistantException(f"Missing API keys: {missing}", sys)
+
+    def get(self, key_name: str, default=None):
+        """
+        Retrieves an API key by name from the managed dictionary.
+        This method was missing and is required by ModelLoader.
+        """
+        return self.api_keys.get(key_name, default)
+
+
+class ModelLoader:
+    """
+    Loads embedding models and LLMs based on config and environment.
+    """
+
+    def __init__(self):
+        if os.getenv("ENV", "local").lower() != "production":
+            load_dotenv()
+            log.info("Running in LOCAL mode: .env loaded")
+        else:
+            log.info("Running in PRODUCTION mode")
+
+        self.api_key_mgr = ApiKeyManager()
+        self.config = load_config()
+        log.info("YAML config loaded", config_keys=list(self.config.keys()))
+
+    
+
+    def load_embeddings(self):
+        """
+        Load and return embedding model from Google Generative AI.
+        """
+        try:
+            model_name = self.config["embedding_model"]["model_name"]
+            log.info("Loading embedding model", model=model_name)
+
+            # Patch: Ensure an event loop exists for gRPC aio
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.set_event_loop(asyncio.new_event_loop())
+
+            return GoogleGenerativeAIEmbeddings(
+                model=model_name,
+                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY")  # type: ignore
+            )
+        except Exception as e:
+            log.error("Error loading embedding model", error=str(e))
+            raise ProductAssistantException("Failed to load embedding model", sys)
+
+
+    def load_llm(self):
+        """
+        Load and return the configured LLM model.
+        """
+        llm_block = self.config["llm"]
+        provider_key = os.getenv("LLM_PROVIDER", "google")
+
+        if provider_key not in llm_block:
+            log.error("LLM provider not found in config", provider=provider_key)
+            raise ValueError(f"LLM provider '{provider_key}' not found in config")
+
+        llm_config = llm_block[provider_key]
+        provider = llm_config.get("provider")
+        model_name = llm_config.get("model_name")
+        temperature = llm_config.get("temperature", 0.2)
+        max_tokens = llm_config.get("max_output_tokens", 2048)
+
+        log.info("Loading LLM", provider=provider, model=model_name)
+
+        if provider == "google":
+            return ChatGoogleGenerativeAI(
+                model=model_name,
+                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
+                temperature=temperature,
+                max_output_tokens=max_tokens
+            )
+
+        elif provider == "groq":
+            return ChatGroq(
+                model=model_name,
+                api_key=self.api_key_mgr.get("GROQ_API_KEY"), #type: ignore
+                temperature=temperature,
+            )
+
+        # elif provider == "openai":
+        #     return ChatOpenAI(
+        #         model=model_name,
+        #         api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
+        #         temperature=temperature
+        #     )
+
+        else:
+            log.error("Unsupported LLM provider", provider=provider)
+            raise ValueError(f"Unsupported LLM provider: {provider}")
+
+
+if __name__ == "__main__":
+    loader = ModelLoader()
+
+    # Test Embedding
+    embeddings = loader.load_embeddings()
+    print(f"Embedding Model Loaded: {embeddings}")
+    result = embeddings.embed_query("Hello, how are you?")
+    print(f"Embedding Result: {result}")
+
+    # Test LLM
+    llm = loader.load_llm()
+    print(f"LLM Loaded: {llm}")
+    result = llm.invoke("Hello, how are you?")
+    print(f"LLM Result: {result.content}")
