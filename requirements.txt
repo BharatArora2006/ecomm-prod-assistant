@@ -25,8 +25,6 @@ diskcache==5.6.3
 distro==1.9.0
 dnspython==2.8.0
 docstring_parser==0.17.0
-# Editable install with no version control (ecomm-prod-assistant==0.1.0)
--e c:\users\pc\ecomm-prod-assistant
 fastapi==0.116.1
 filelock==3.19.1
 filetype==1.2.0
@@ -112,7 +110,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 python-multipart==0.0.20
 pytz==2025.2
-pywin32==311
+pywin32==311; sys_platform == 'win32'
 PyYAML==6.0.3
 ragas==0.3.4
 referencing==0.36.2
@@ -163,3 +161,4 @@ wsproto==1.2.0
 xxhash==3.5.0
 yarl==1.20.1
 zstandard==0.25.0
+-e .
