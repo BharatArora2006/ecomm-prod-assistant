@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 ENV PYTHONPATH=/app
+ENV ENV=production
 
 # run both MCP server and FastAPI properly
 CMD ["bash", "-c", "python prod_assistant/mcp_servers/product_search_server.py & exec uvicorn prod_assistant.router.main:app --host 0.0.0.0 --port 8000 --workers 2"]
