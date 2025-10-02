@@ -30,7 +30,9 @@ class AgenticRAG:
         self.mcp_client = MultiServerMCPClient({
             "hybrid_search": {
                 "command": "python",
-                "args": ["prod_assistant/mcp_servers/product_search_server.py"],  # server with retriever+websearch
+                # "args": ["prod_assistant/mcp_servers/product_search_server.py"],  # server with retriever+websearch
+                "args": ["/app/prod_assistant/mcp_servers/product_search_server.py"]
+
                 "transport": "stdio"
             }
         })

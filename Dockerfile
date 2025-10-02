@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt pyproject.toml ./
-COPY prod_assistant ./prod_assistant
+# COPY prod_assistant ./prod_assistant
 
 RUN pip install --no-cache-dir -r requirements.txt
 
