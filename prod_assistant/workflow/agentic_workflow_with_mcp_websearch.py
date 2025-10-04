@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
+# Note: Assuming these imports are available in your environment
 from prompt_library.prompts import PROMPT_REGISTRY, PromptType
 from retriever.retrieval import Retriever
 from utils.model_loader import ModelLoader
@@ -19,14 +20,15 @@ class AgenticRAG:
     class AgentState(TypedDict):
         messages: Annotated[Sequence[BaseMessage], add_messages]
 
-    # ---------- Initialization ----------
+    # ---------- Initialization (Synchronous) ----------
     def __init__(self):
         self.retriever_obj = Retriever()
         self.model_loader = ModelLoader()
         self.llm = self.model_loader.load_llm()
         self.checkpointer = MemorySaver()
+        self.mcp_tools = [] # Initialize placeholder for tools loaded later
 
-        # Initialize MCP client
+        # Initialize MCP client synchronously, but do not load tools yet
         self.mcp_client = MultiServerMCPClient(
             {
                 "hybrid_search": {
@@ -36,25 +38,32 @@ class AgenticRAG:
             }
         )
 
-        # Build workflow
+        # Build and compile workflow
         self.workflow = self._build_workflow()
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
-        # Load MCP tools asynchronously
-        asyncio.run(self._safe_async_init())
+    # ---------- Async Lifecycle Methods (Called by FastAPI Lifespan) ----------
 
     async def async_init(self):
-        """Load MCP tools asynchronously."""
-        self.mcp_tools = await self.mcp_client.get_tools()
-
-    async def _safe_async_init(self):
-        """Safe async init wrapper (prevents event loop crash)."""
+        """Asynchronously load MCP tools using the Uvicorn/FastAPI event loop."""
+        print("AgenticRAG: Loading MCP tools asynchronously...")
         try:
+            # We move the tool loading logic here, which must be awaited
             self.mcp_tools = await self.mcp_client.get_tools()
-            print("MCP tools loaded successfully.")
+            print("AgenticRAG: MCP tools loaded successfully.")
         except Exception as e:
             print(f"Warning: Failed to load MCP tools — {e}")
             self.mcp_tools = []
+    
+    async def async_shutdown(self):
+        """Gracefully shut down connections (e.g., the MCP client)."""
+        print("AgenticRAG: Shutting down MCP client.")
+        if self.mcp_client and hasattr(self.mcp_client, 'close'):
+            try:
+                # Assuming the MCP client has an async close method
+                await self.mcp_client.close()
+            except Exception as e:
+                 print(f"Warning: Error during MCP client shutdown — {e}")
 
     # ---------- Nodes ----------
     def _ai_assistant(self, state: AgentState):
@@ -76,9 +85,10 @@ class AgenticRAG:
         print("--- RETRIEVER (MCP) ---")
         query = state["messages"][-1].content
 
+        # Look for the product info tool in the loaded tools
         tool = next((t for t in self.mcp_tools if t.name == "get_product_info"), None)
         if not tool:
-            return {"messages": [HumanMessage(content="Retriever tool not found in MCP client.")]}
+            return {"messages": [HumanMessage(content="Retriever tool not found in MCP client. Initialization might have failed.")]}
 
         try:
             result = await tool.ainvoke({"query": query})
@@ -91,8 +101,13 @@ class AgenticRAG:
     async def _web_search(self, state: AgentState):
         print("--- WEB SEARCH (MCP) ---")
         query = state["messages"][-1].content
-        tool = next(t for t in self.mcp_tools if t.name == "web_search")
-        result = await tool.ainvoke({"query": query})  # ✅
+        
+        # Look for the web search tool in the loaded tools
+        tool = next((t for t in self.mcp_tools if t.name == "web_search"), None)
+        if not tool:
+            return {"messages": [HumanMessage(content="Web search tool not found in MCP client. Initialization might have failed.")]}
+            
+        result = await tool.ainvoke({"query": query})
         context = result if result else "No data from web"
         return {"messages": [HumanMessage(content=context)]}
 
@@ -181,8 +196,15 @@ class AgenticRAG:
         )
         return result["messages"][-1].content
 
-# ---------- Standalone Test ----------
+# ---------- Standalone Test (Fix: Now using asyncio.run correctly) ----------
 if __name__ == "__main__":
-    rag_agent = AgenticRAG()
-    answer = rag_agent.run("What is the price of iPhone 16?")
-    print("\nFinal Answer:\n", answer)
+    async def main_test():
+        rag_agent = AgenticRAG()
+        # Initialize the agent asynchronously before running
+        await rag_agent.async_init() 
+        answer = await rag_agent.run("What is the price of iPhone 16?")
+        print("\nFinal Answer:\n", answer)
+        await rag_agent.async_shutdown()
+
+    # Run the asynchronous test function
+    asyncio.run(main_test())
