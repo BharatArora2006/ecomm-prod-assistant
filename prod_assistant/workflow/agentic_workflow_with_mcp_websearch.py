@@ -41,7 +41,7 @@ class AgenticRAG:
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
         # Load MCP tools asynchronously
-        asyncio.run(self._safe_async_init())
+        # asyncio.run(self._safe_async_init())
 
     async def async_init(self):
         """Load MCP tools asynchronously."""
