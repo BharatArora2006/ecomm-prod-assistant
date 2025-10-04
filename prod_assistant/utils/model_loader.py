@@ -4,7 +4,7 @@ import json
 from dotenv import load_dotenv
 from utils.config_loader import load_config
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import ProductAssistantException
@@ -12,55 +12,25 @@ import asyncio
 
 
 class ApiKeyManager:
-    """
-    Manages API keys, loading them from environment variables or a JSON string.
-    """
     def __init__(self):
-        self.api_keys = {}
+        self.api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "GROQ_API_KEY": os.getenv("GROQ_API_KEY"),
+            "ASTRA_DB_API_ENDPOINT": os.getenv("ASTRA_DB_API_ENDPOINT"),
+            "ASTRA_DB_APPLICATION_TOKEN": os.getenv("ASTRA_DB_APPLICATION_TOKEN"),
+            "ASTRA_DB_KEYSPACE": os.getenv("ASTRA_DB_KEYSPACE"),
+        }
 
-        raw = os.getenv("API_KEYS")
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    self.api_keys = parsed
-                    log.info("Loaded API_KEYS JSON")
-            except Exception as e:
-                log.warning("Failed to parse API_KEYS JSON", error=str(e))
+        # Just log loaded keys (don't print actual values)
+        for key, val in self.api_keys.items():
+            if val:
+                log.info(f"{key} loaded from environment")
+            else:
+                log.warning(f"{key} is missing from environment")
 
-        # Decide required keys dynamically
-        required = ["GOOGLE_API_KEY"]
-        provider = os.getenv("LLM_PROVIDER", "google").lower()
-        if provider == "openai":
-            required.append("OPENAI_API_KEY")
-        elif provider == "groq":
-            required.append("GROQ_API_KEY")
-        elif provider == "google":
-            # GOOGLE_API_KEY is already in required, but ensure consistency
-            if "GOOGLE_API_KEY" not in required:
-                 required.append("GOOGLE_API_KEY")
-
-
-        # Load from env if not in API_KEYS JSON
-        for key in required:
-            if not self.api_keys.get(key):
-                val = os.getenv(key)
-                if val:
-                    self.api_keys[key] = val
-                    log.info(f"Loaded {key} from env")
-
-        # Final check
-        missing = [k for k in required if not self.api_keys.get(k)]
-        if missing:
-            raise ProductAssistantException(f"Missing API keys: {missing}", sys)
-
-    def get(self, key_name: str, default=None):
-        """
-        Retrieves an API key by name from the managed dictionary.
-        This method was missing and is required by ModelLoader.
-        """
-        return self.api_keys.get(key_name, default)
-
+    def get(self, key: str):
+        return self.api_keys.get(key)
 
 class ModelLoader:
     """
@@ -68,12 +38,6 @@ class ModelLoader:
     """
 
     def __init__(self):
-        if os.getenv("ENV", "local").lower() != "production":
-            load_dotenv()
-            log.info("Running in LOCAL mode: .env loaded")
-        else:
-            log.info("Running in PRODUCTION mode")
-
         self.api_key_mgr = ApiKeyManager()
         self.config = load_config()
         log.info("YAML config loaded", config_keys=list(self.config.keys()))
@@ -137,12 +101,12 @@ class ModelLoader:
                 temperature=temperature,
             )
 
-        # elif provider == "openai":
-        #     return ChatOpenAI(
-        #         model=model_name,
-        #         api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
-        #         temperature=temperature
-        #     )
+        elif provider == "openai":
+            return ChatOpenAI(
+                model=model_name,
+                api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
+                temperature=temperature
+            )
 
         else:
             log.error("Unsupported LLM provider", provider=provider)
